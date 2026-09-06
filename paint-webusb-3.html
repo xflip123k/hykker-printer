@@ -1,0 +1,1447 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Paint 96×320 — edytor warstwowy</title>
+<style>
+  :root{
+    --bg:#1b1d1f;
+    --panel:#232527;
+    --panel-2:#2b2e31;
+    --line:#3a3d41;
+    --text:#e7e5e0;
+    --text-dim:#9a9da2;
+    --accent:#f2c14e;
+    --accent-dim:#5a4c26;
+    --danger:#d9634b;
+    --mono: 'JetBrains Mono', 'Courier New', monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family: var(--mono);
+    display:flex; height:100vh; overflow:hidden;
+    font-size:13px;
+  }
+  button{
+    font-family:var(--mono); font-size:12px; cursor:pointer;
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    padding:6px 8px; border-radius:3px;
+  }
+  button:hover{ border-color:var(--accent); }
+  button:disabled{ opacity:.35; cursor:default; }
+  button:disabled:hover{ border-color:var(--line); }
+  button.active{ background:var(--accent-dim); border-color:var(--accent); color:var(--accent); }
+  input[type=text], input[type=number], select, textarea{
+    font-family:var(--mono); background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:3px; padding:4px 6px; width:100%;
+  }
+  input[type=range]{ width:100%; accent-color:var(--accent); }
+  label{ display:block; font-size:11px; color:var(--text-dim); margin:8px 0 3px; text-transform:uppercase; letter-spacing:.04em;}
+  h1{ font-size:13px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); letter-spacing:.05em; text-transform:uppercase; color:var(--text-dim);}
+  .row{ display:flex; gap:6px; flex-wrap:wrap; }
+  .col{ display:flex; flex-direction:column; gap:6px; }
+
+  /* LEFT TOOLBAR */
+  #tools{ width:150px; background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; flex-shrink:0;}
+  #tools .section{ padding:10px 12px; border-bottom:1px solid var(--line); }
+  #tools button{ width:100%; text-align:left; margin-bottom:4px; }
+
+  /* CENTER CANVAS AREA */
+  #canvasArea{ flex:1; display:flex; align-items:center; justify-content:center; overflow:auto; background:
+    repeating-conic-gradient(#242628 0% 25%, #202224 0% 50%) 0 0/16px 16px;
+  }
+  #canvasWrap{ position:relative; box-shadow:0 0 0 1px var(--line), 0 10px 40px rgba(0,0,0,.5); }
+  #main{ image-rendering: pixelated; image-rendering: crisp-edges; display:block; background:#fff; cursor:crosshair; touch-action: none; -webkit-user-select:none; user-select:none; }
+  #overlay{ pointer-events:none; image-rendering: pixelated; image-rendering: crisp-edges; }
+
+  /* RIGHT PANEL */
+  #right{ width:230px; background:var(--panel); border-left:1px solid var(--line); overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column;}
+  #layers{ border-bottom:1px solid var(--line); }
+  .layer-item{
+    display:flex; align-items:center; gap:6px; padding:6px 10px; border-bottom:1px solid var(--line);
+    cursor:pointer; font-size:11px;
+  }
+  .layer-item.selected{ background:var(--accent-dim); }
+  .layer-item .name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .layer-item button{ padding:2px 5px; font-size:10px; }
+  .layer-item .badge{ font-size:9px; color:var(--text-dim); border:1px solid var(--line); border-radius:2px; padding:1px 3px;}
+  #props{ padding:10px 12px; flex:1; }
+  #props .hint{ color:var(--text-dim); font-size:11px; line-height:1.5; }
+  .swatchrow{ display:flex; gap:6px; }
+  .swatch{ width:28px; height:28px; border-radius:3px; border:2px solid var(--line); cursor:pointer;}
+  .swatch.sel{ border-color:var(--accent); }
+  .swatch.black{ background:#000; }
+  .swatch.white{ background:#fff; }
+  small.tag{ color:var(--text-dim); }
+  #fileInput{ display:none; }
+  .zoomrow{ display:flex; align-items:center; gap:8px; padding:8px 12px; border-top:1px solid var(--line); font-size:11px; color:var(--text-dim);}
+  #exportBtns{ padding:10px 12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:6px; }
+  #exportBtns button{ flex:1; }
+  #printBtn{ background:var(--accent-dim); border-color:var(--accent); color:var(--accent); font-size:13px; padding:10px; font-weight:bold; }
+  #printBtn:hover{ background:var(--accent); color:#1b1d1f; }
+  #printBtn:disabled{ opacity:.5; cursor:default; background:var(--panel-2); color:var(--text); border-color:var(--line); }
+  #printStatus{ font-size:11px; min-height:14px; text-align:center; }
+  #printStatus.status-ok{ color:#7ed08a; }
+  #printStatus.status-err{ color:var(--danger); }
+  #printStatus.status-info{ color:var(--text-dim); }
+/* ---- Układ mobilny (wąskie ekrany, np. telefon w Chrome na Androidzie) ----
+   Domyślny układ 3-kolumnowy (tools|canvas|right) ma sztywne szerokości paneli
+   bocznych (150px+230px=380px) z flex-shrink:0 — na telefonie ~360-400px szerokim
+   nie zostawiało to kanwie praktycznie żadnego miejsca. Poniżej: układ pionowy,
+   panele boczne jako przewijalne pasy u góry/dołu, kanwa w środku dostaje główną
+   (elastyczną) przestrzeń. */
+@media (max-width: 820px), (pointer: coarse) and (max-width: 1100px) {
+  body{ flex-direction: column; height: 100dvh; }
+  #tools, #right{
+    width: 100%;
+    max-height: 26vh;
+    flex-shrink: 1;
+    border-right: none;
+    border-left: none;
+  }
+  #tools{ border-bottom: 1px solid var(--line); }
+  #right{ border-top: 1px solid var(--line); border-bottom: none; }
+  #canvasArea{ flex: 1 1 auto; min-height: 0; width: 100%; }
+  #tools .section{ padding: 8px 10px; }
+  #tools button{ margin-bottom: 3px; padding: 8px; }
+  .layer-item{ padding: 8px 10px; }
+  .layer-item button{ padding: 4px 7px; font-size: 11px; }
+}
+</style>
+</head>
+<body>
+
+<div id="startupModal" style="position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:1000; display:flex; align-items:center; justify-content:center; font-family:'JetBrains Mono','Courier New',monospace;">
+  <div style="background:#232527; border:1px solid #3a3d41; border-radius:6px; padding:24px; max-width:340px; width:90%; color:#e7e5e0;">
+    <h2 style="margin:0 0 6px; font-size:15px; text-transform:uppercase; letter-spacing:.05em; color:#f2c14e;">Długość etykiety</h2>
+    <p style="font-size:12px; color:#9a9da2; line-height:1.5; margin:0 0 14px;">
+      Drukarka drukuje dokładnie tyle, ile wysokości ma wysłany bufor — krótszy bufor = krótszy wydruk.
+      Wybierz długość pasującą do Twoich etykiet (szerokość 96px jest stała).
+    </p>
+
+    <label style="display:block; font-size:11px; color:#9a9da2; margin:0 0 4px; text-transform:uppercase;">Jednostka</label>
+    <div class="row" style="margin-bottom:10px;">
+      <button type="button" id="unitPxBtn" style="flex:1; background:#5a4c26; border:1px solid #f2c14e; color:#f2c14e; padding:6px; border-radius:3px; cursor:pointer; font-family:inherit;">px</button>
+      <button type="button" id="unitMmBtn" style="flex:1; background:#1b1d1f; border:1px solid #3a3d41; color:#e7e5e0; padding:6px; border-radius:3px; cursor:pointer; font-family:inherit;">mm</button>
+    </div>
+
+    <div id="unitPxBlock">
+      <label style="display:block; font-size:11px; color:#9a9da2; margin:0 0 4px; text-transform:uppercase;">Ustawienie</label>
+      <select id="startupPreset" style="width:100%; background:#1b1d1f; color:#e7e5e0; border:1px solid #3a3d41; border-radius:3px; padding:6px; margin-bottom:10px;">
+        <option value="320">320px — dotychczasowe etykiety</option>
+        <option value="280">280px</option>
+        <option value="240" selected>240px — trochę krótsze</option>
+        <option value="200">200px</option>
+        <option value="custom">Inna wartość (podaj px)…</option>
+      </select>
+      <div id="startupCustomWrap" style="display:none; margin-bottom:10px;">
+        <label style="display:block; font-size:11px; color:#9a9da2; margin:0 0 4px; text-transform:uppercase;">Wysokość w px</label>
+        <input type="number" id="startupCustom" min="16" max="2000" value="240" style="width:100%; background:#1b1d1f; color:#e7e5e0; border:1px solid #3a3d41; border-radius:3px; padding:6px;">
+      </div>
+    </div>
+
+    <div id="unitMmBlock" style="display:none;">
+      <label style="display:block; font-size:11px; color:#9a9da2; margin:0 0 4px; text-transform:uppercase;">Długość etykiety (mm)</label>
+      <select id="startupPresetMm" style="width:100%; background:#1b1d1f; color:#e7e5e0; border:1px solid #3a3d41; border-radius:3px; padding:6px; margin-bottom:10px;">
+        <option value="40">40mm — dotychczasowe etykiety</option>
+        <option value="30" selected>30mm — nowe etykiety</option>
+        <option value="custom">Inna wartość (podaj mm)…</option>
+      </select>
+      <div id="startupCustomMmWrap" style="display:none; margin-bottom:6px;">
+        <label style="display:block; font-size:11px; color:#9a9da2; margin:0 0 4px; text-transform:uppercase;">Długość w mm</label>
+        <input type="number" id="startupCustomMm" min="2" max="250" step="0.5" value="30" style="width:100%; background:#1b1d1f; color:#e7e5e0; border:1px solid #3a3d41; border-radius:3px; padding:6px;">
+      </div>
+      <p style="font-size:11px; color:#9a9da2; margin:0 0 10px;">
+        ≈ <span id="mmToPxPreview">240</span>px przy przeliczniku 8 px/mm (wyliczonym z Twoich
+        dotychczasowych etykiet: 320px = 40mm). Jeśli wyjdzie nieidealnie, dostosuj w trybie px.
+      </p>
+    </div>
+
+    <p style="font-size:11px; color:#9a9da2; line-height:1.4; margin:0 0 14px;">
+      Nie znasz dokładnej wartości? Zacznij od przybliżenia i dostosuj metodą prób —
+      jeśli wydruk będzie za długi/krótki, po prostu odśwież stronę i wybierz inną wartość.
+    </p>
+    <button id="startupBtn" style="width:100%; background:#5a4c26; border:1px solid #f2c14e; color:#f2c14e; font-weight:bold; padding:10px; border-radius:3px; cursor:pointer; font-family:inherit; font-size:13px;">Rozpocznij</button>
+  </div>
+</div>
+
+<div id="tools">
+  <h1>Narzędzia</h1>
+  <div class="section col">
+    <button data-tool="select" id="t-select">▤ Zaznacz / przesuń</button>
+    <button data-tool="pen" id="t-pen">✎ Pędzel</button>
+    <button data-tool="eraser" id="t-eraser" title="Czyści do przezroczystości — odsłania to, co jest niżej (inna warstwa / białe tło). To NIE jest białe malowanie.">▧ Gumka (przezroczystość)</button>
+    <button data-tool="text" id="t-text">T Tekst</button>
+    <button data-tool="rect" id="t-rect">▭ Prostokąt</button>
+    <button data-tool="ellipse" id="t-ellipse">◯ Elipsa</button>
+    <button data-tool="line" id="t-line">╱ Linia</button>
+    <button id="t-image">🖼 Wstaw obraz</button>
+    <input type="file" id="fileInput" accept="image/*">
+  </div>
+
+  <div class="section col">
+    <label>Kolor rysowania</label>
+    <div class="swatchrow">
+      <div class="swatch black sel" id="colBlack" title="Czarny"></div>
+      <div class="swatch white" id="colWhite" title="Biały"></div>
+    </div>
+    <label>Grubość pędzla / obrysu: <span id="brushVal">2</span>px</label>
+    <input type="range" id="brushSize" min="1" max="20" value="2">
+  </div>
+
+  <div class="section col">
+    <label>Nowy kształt — wypełnienie</label>
+    <div class="row">
+      <button id="fillToggle" class="active">Wypełniony</button>
+    </div>
+  </div>
+
+  <div class="section col">
+    <label>Historia</label>
+    <div class="row">
+      <button id="undoBtn" style="flex:1" disabled>↶ Cofnij</button>
+      <button id="redoBtn" style="flex:1" disabled>↷ Ponów</button>
+    </div>
+  </div>
+
+  <div class="section col">
+    <label>Kanwa</label>
+    <button id="rotateView" title="Obraca tylko widok roboczy — bufor i eksport zawsze zostają 96×320 pionowo">⟳ Obróć widok 90°</button>
+    <button id="clearAll">Wyczyść wszystko</button>
+  </div>
+</div>
+
+<div id="canvasArea">
+  <div id="canvasWrap">
+    <canvas id="main" width="96" height="320"></canvas>
+    <canvas id="overlay" width="96" height="320"></canvas>
+  </div>
+</div>
+
+<div id="right">
+  <h1>Warstwy</h1>
+  <div id="layers"></div>
+  <div id="props"><div class="hint">Wybierz warstwę na liście albo narysuj / dodaj element, aby zobaczyć jej właściwości tutaj.</div></div>
+  <div class="zoomrow">
+    <span>Zoom</span>
+    <input type="range" id="zoom" min="1" max="8" value="4" style="flex:1">
+    <span id="zoomVal">4×</span>
+  </div>
+  <div id="exportBtns">
+    <div id="usbWarning" style="display:none; font-size:11px; color:var(--danger); padding:6px; border:1px solid var(--danger); border-radius:3px;"></div>
+    <button id="printBtn">🖨 DRUKUJ (USB)</button>
+    <div id="printStatus"></div>
+    <button id="exportBmp">Podgląd 1:1</button>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+const CW = 96;
+let CH = 320; // wysokość bufora (= długość etykiety w pikselach) — ustawiana na ekranie startowym
+const main = document.getElementById('main');
+const mctx = main.getContext('2d');
+const overlay = document.getElementById('overlay');
+const octx = overlay.getContext('2d');
+mctx.imageSmoothingEnabled = false;
+octx.imageSmoothingEnabled = false;
+
+let layers = [];       // bottom -> top
+let idCounter = 1;
+let activeId = null;
+let tool = 'select';
+let drawColor = '#000000';
+let brushSize = 2;
+let fillShapes = true;
+let zoom = 4;
+let rotatedView = false; // tylko widok roboczy — bufor 96x320 i eksport zawsze zostają pionowe
+
+function applyCanvasTransform(){
+  const w = CW*zoom, h = CH*zoom;
+  [main, overlay].forEach(c=>{
+    c.style.position = 'absolute';
+    c.style.top = '50%';
+    c.style.left = '50%';
+    c.style.width = w+'px';
+    c.style.height = h+'px';
+    c.style.transform = 'translate(-50%,-50%)' + (rotatedView ? ' rotate(90deg)' : '');
+  });
+  const wrap = document.getElementById('canvasWrap');
+  wrap.style.width = (rotatedView ? h : w) + 'px';
+  wrap.style.height = (rotatedView ? w : h) + 'px';
+}
+
+function setZoom(z){
+  zoom = z;
+  applyCanvasTransform();
+  document.getElementById('zoomVal').textContent = z+'×';
+}
+setZoom(zoom);
+document.getElementById('zoom').addEventListener('input', e=>setZoom(parseInt(e.target.value,10)));
+
+document.getElementById('rotateView').addEventListener('click', (e)=>{
+  rotatedView = !rotatedView;
+  e.target.classList.toggle('active', rotatedView);
+  applyCanvasTransform();
+});
+
+// ---------- Layer model ----------
+// layer: {id,type,name,visible,x,y,scale,canvas,ctx, ...type specific props}
+
+function makeLayerCanvas(w,h){
+  const c = document.createElement('canvas');
+  c.width = Math.max(1,Math.round(w));
+  c.height = Math.max(1,Math.round(h));
+  const cx = c.getContext('2d');
+  cx.imageSmoothingEnabled = false;
+  return {canvas:c, ctx:cx};
+}
+
+function addLayer(layer){
+  layer.id = idCounter++;
+  if(layer.visible === undefined) layer.visible = true;
+  if(layer.scale === undefined) layer.scale = 1;
+  if(layer.rotation === undefined) layer.rotation = 0;
+  layers.push(layer);
+  activeId = layer.id;
+  refreshLayerList();
+  renderAll();
+  return layer;
+}
+
+// Wymiary "odcisku" warstwy w przestrzeni bufora (96x320), z uwzględnieniem obrotu —
+// przy 90°/270° szerokość i wysokość się zamieniają miejscami.
+function layerFootprint(l){
+  const rot = ((l.rotation||0) % 360 + 360) % 360;
+  const rawW = l.canvas.width * l.scale, rawH = l.canvas.height * l.scale;
+  const swapped = (rot===90 || rot===270);
+  return swapped ? {fw:rawH, fh:rawW} : {fw:rawW, fh:rawH};
+}
+
+// Zwraca prostokąt (w lokalnej, nieobróconej przestrzeni canvasu warstwy) faktycznie
+// narysowanej treści. Dla warstw innych niż 'draw' cały canvas JEST treścią (już przycięty
+// przy tworzeniu — tekst/kształt/obraz). Dla warstwy rysunku odręcznego canvas ma zawsze
+// pełny rozmiar etykiety (96×CH), więc trzeba znaleźć rzeczywisty zakres narysowanych
+// (nieprzezroczystych) pikseli, żeby obrys zaznaczenia nie obejmował całej pustej etykiety.
+function getLayerLocalContentRect(l){
+  if(l.type !== 'draw'){
+    return {x:0, y:0, w:l.canvas.width, h:l.canvas.height};
+  }
+  const w = l.canvas.width, h = l.canvas.height;
+  const data = l.imgData ? l.imgData.data : l.canvas.getContext('2d').getImageData(0,0,w,h).data;
+  let minX=w, minY=h, maxX=-1, maxY=-1;
+  for(let y=0; y<h; y++){
+    const row = y*w;
+    for(let x=0; x<w; x++){
+      if(data[(row+x)*4+3] > 0){
+        if(x<minX) minX=x;
+        if(x>maxX) maxX=x;
+        if(y<minY) minY=y;
+        if(y>maxY) maxY=y;
+      }
+    }
+  }
+  if(maxX < 0){
+    // Nic jeszcze nie narysowano — mały prostokąt w rogu zamiast zera/całej etykiety.
+    return {x:0, y:0, w:1, h:1};
+  }
+  return {x:minX, y:minY, w:(maxX-minX+1), h:(maxY-minY+1)};
+}
+
+// Widoczny prostokąt zaznaczenia w przestrzeni globalnej bufora — dla warstwy rysunku to
+// tylko faktyczna treść (nie cała etykieta), z uwzględnieniem skali i obrotu (te same
+// dokładne stałe -1/0/1 co przy kompozytowaniu w drawLayer).
+function layerSelectionBox(l){
+  if(l.type !== 'draw'){
+    const {fw, fh} = layerFootprint(l);
+    return {x: l.x, y: l.y, fw, fh};
+  }
+
+  const rect = getLayerLocalContentRect(l);
+  const scale = l.scale;
+  const rot = ((l.rotation||0) % 360 + 360) % 360;
+  const cxLocal = l.canvas.width/2, cyLocal = l.canvas.height/2;
+
+  const corners = [
+    [rect.x, rect.y],
+    [rect.x+rect.w, rect.y],
+    [rect.x, rect.y+rect.h],
+    [rect.x+rect.w, rect.y+rect.h],
+  ].map(([x,y]) => [(x-cxLocal)*scale, (y-cyLocal)*scale]);
+
+  let a=1,b=0,c=0,d=1;
+  if(rot===90){ a=0; b=1; c=-1; d=0; }
+  else if(rot===180){ a=-1; b=0; c=0; d=-1; }
+  else if(rot===270){ a=0; b=-1; c=1; d=0; }
+
+  const transformed = corners.map(([x,y]) => [a*x+c*y, b*x+d*y]);
+  const xs = transformed.map(p=>p[0]), ys = transformed.map(p=>p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+  const {fw: fullFw, fh: fullFh} = layerFootprint(l);
+  const centerX = l.x + fullFw/2;
+  const centerY = l.y + fullFh/2;
+
+  return {
+    x: Math.round(centerX + minX),
+    y: Math.round(centerY + minY),
+    fw: Math.round(maxX - minX),
+    fh: Math.round(maxY - minY),
+  };
+}
+
+function getLayer(id){ return layers.find(l=>l.id===id); }
+function activeLayer(){ return getLayer(activeId); }
+
+function removeLayer(id){
+  layers = layers.filter(l=>l.id!==id);
+  if(activeId===id) activeId = layers.length ? layers[layers.length-1].id : null;
+  refreshLayerList(); renderAll();
+  commitHistory();
+}
+
+function moveLayer(id, dir){
+  const i = layers.findIndex(l=>l.id===id);
+  const j = i+dir;
+  if(j<0||j>=layers.length) return;
+  [layers[i],layers[j]] = [layers[j],layers[i]];
+  refreshLayerList(); renderAll();
+  commitHistory();
+}
+
+// ---------- Historia (cofnij / ponów) ----------
+const HISTORY_LIMIT = 60;
+let history = [];
+let historyIndex = -1;
+let restoring = false; // blokuje commitHistory() podczas przywracania stanu
+
+function cloneCanvas(src){
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  c.getContext('2d').drawImage(src,0,0);
+  return c;
+}
+
+function cloneLayer(l){
+  const clone = Object.assign({}, l);
+  clone.canvas = cloneCanvas(l.canvas);
+  clone.ctx = clone.canvas.getContext('2d');
+  if(l.origCanvas) clone.origCanvas = cloneCanvas(l.origCanvas);
+  if(l.imgData) clone.imgData = new ImageData(new Uint8ClampedArray(l.imgData.data), l.imgData.width, l.imgData.height);
+  if(l.lineFrom) clone.lineFrom = {...l.lineFrom};
+  if(l.lineTo) clone.lineTo = {...l.lineTo};
+  return clone;
+}
+
+function snapshotState(){
+  return { layers: layers.map(cloneLayer), activeId };
+}
+
+function commitHistory(){
+  if(restoring) return;
+  history = history.slice(0, historyIndex+1);
+  history.push(snapshotState());
+  if(history.length > HISTORY_LIMIT) history.shift();
+  historyIndex = history.length-1;
+  updateUndoRedoButtons();
+}
+
+function applyState(state){
+  restoring = true;
+  layers = state.layers.map(cloneLayer);
+  activeId = state.activeId;
+  refreshLayerList();
+  renderAll();
+  restoring = false;
+}
+
+function undo(){
+  if(historyIndex <= 0) return;
+  historyIndex--;
+  applyState(history[historyIndex]);
+  updateUndoRedoButtons();
+}
+
+function redo(){
+  if(historyIndex >= history.length-1) return;
+  historyIndex++;
+  applyState(history[historyIndex]);
+  updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons(){
+  const u = document.getElementById('undoBtn');
+  const r = document.getElementById('redoBtn');
+  if(u) u.disabled = historyIndex <= 0;
+  if(r) r.disabled = historyIndex >= history.length-1;
+}
+
+// ---------- Rendering ----------
+function renderAll(){
+  mctx.clearRect(0,0,CW,CH);
+  mctx.fillStyle = '#ffffff';
+  mctx.fillRect(0,0,CW,CH);
+  for(const l of layers){
+    if(!l.visible) continue;
+    drawLayer(mctx, l);
+  }
+  drawSelectionOverlay();
+}
+
+// Rysuje warstwę na docelowym ctx z uwzględnieniem trwałego obrotu (l.rotation: 0/90/180/270).
+// To trafia bezpośrednio do bufora 96x320 (a więc i do eksportu) — nie jest to efekt wizualny widoku.
+//
+// WAŻNE: wszystkie współrzędne docelowe są zaokrąglane do pełnych pikseli. drawImage() przy
+// ułamkowych pozycjach/wymiarach antyaliasuje KRAWĘDŹ rysowanego obrazka — to inny mechanizm
+// niż imageSmoothingEnabled (które dotyczy tylko próbkowania wnętrza), więc samo wyłączenie
+// wygładzania tego nie eliminuje. Przy cienkich liniach, gdzie prawie cała treść to krawędź,
+// dawało to widoczne "rozmycie" mimo że dane źródłowe są czysto czarno-białe.
+function drawLayer(ctx, l){
+  const rot = ((l.rotation||0) % 360 + 360) % 360;
+  const rawW = l.canvas.width * l.scale, rawH = l.canvas.height * l.scale;
+  const {fw, fh} = layerFootprint(l);
+
+  // Środek obrotu i wymiary źródła zaokrąglone do całych pikseli — przy obrotach
+  // ograniczonych do wielokrotności 90° (jedyne wspierane) integer-in => integer-out,
+  // więc to w pełni eliminuje ułamkowe pozycje bez wpływu na poprawność obrotu.
+  const cx = Math.round(l.x + fw/2);
+  const cy = Math.round(l.y + fh/2);
+  const dw = Math.round(rawW);
+  const dh = Math.round(rawH);
+  const halfW = Math.round(dw/2);
+  const halfH = Math.round(dh/2);
+
+  // Macierz obrotu ze stałymi CAŁKOWITYMI (-1/0/1) zamiast ctx.rotate(radiany).
+  // ctx.rotate() liczy sin/cos z kąta w radianach, a Math.cos(Math.PI/2) w JS NIE jest
+  // idealnym zerem (to ok. 6.12e-17) — ten mikroskopijny błąd zmiennoprzecinkowy dawał
+  // resztkowe, delikatne cieniowanie krawędzi nawet po zaokrągleniu pozycji/wymiarów.
+  // Stałe -1/0/1 są matematycznie dokładne, więc eliminują to całkowicie.
+  let a=1, b=0, c=0, d=1;
+  if(rot === 90){       a=0;  b=1;  c=-1; d=0; }
+  else if(rot === 180){ a=-1; b=0;  c=0;  d=-1; }
+  else if(rot === 270){ a=0;  b=-1; c=1;  d=0; }
+
+  ctx.save();
+  ctx.setTransform(a, b, c, d, cx, cy);
+  ctx.drawImage(l.canvas, -halfW, -halfH, dw, dh);
+  ctx.restore();
+}
+
+function drawSelectionOverlay(){
+  octx.clearRect(0,0,CW,CH);
+  const l = activeLayer();
+  if(!l) return;
+  const box = layerSelectionBox(l);
+  octx.save();
+  octx.strokeStyle = '#f2c14e';
+  octx.setLineDash([4/zoom, 3/zoom]);
+  octx.lineWidth = 1;
+  octx.strokeRect(box.x+0.5, box.y+0.5, box.fw-1, box.fh-1);
+  octx.restore();
+}
+
+// ---------- Layer list UI ----------
+function refreshLayerList(){
+  const box = document.getElementById('layers');
+  box.innerHTML = '';
+  for(let i=layers.length-1;i>=0;i--){
+    const l = layers[i];
+    const row = document.createElement('div');
+    row.className = 'layer-item' + (l.id===activeId ? ' selected':'');
+    row.innerHTML = `
+      <span class="badge">${iconFor(l.type)}</span>
+      <span class="name">${l.name}</span>
+      <button data-act="vis" title="Widoczność">${l.visible?'👁':'—'}</button>
+      <button data-act="up" title="W górę">↑</button>
+      <button data-act="down" title="W dół">↓</button>
+      <button data-act="del" title="Usuń">✕</button>
+    `;
+    row.addEventListener('click', (e)=>{
+      if(e.target.tagName==='BUTTON') return;
+      activeId = l.id; refreshLayerList(); renderAll(); showProps();
+    });
+    row.querySelector('[data-act=vis]').addEventListener('click', ()=>{ l.visible=!l.visible; renderAll(); refreshLayerList(); commitHistory(); });
+    row.querySelector('[data-act=up]').addEventListener('click', ()=> moveLayer(l.id, 1));
+    row.querySelector('[data-act=down]').addEventListener('click', ()=> moveLayer(l.id, -1));
+    row.querySelector('[data-act=del]').addEventListener('click', ()=> removeLayer(l.id));
+    box.appendChild(row);
+  }
+  showProps();
+}
+
+function iconFor(t){
+  return {draw:'✎',text:'T',shape:'▭',image:'🖼'}[t] || '?';
+}
+
+// ---------- Properties panel ----------
+function showProps(){
+  const box = document.getElementById('props');
+  const l = activeLayer();
+  if(!l){ box.innerHTML = '<div class="hint">Brak zaznaczonej warstwy.</div>'; return; }
+
+  let html = `<label>Nazwa</label><input type="text" id="p-name" value="${escapeHtml(l.name)}">`;
+  html += `<label>Skala: <span id="p-scaleVal">${l.scale.toFixed(2)}</span>×</label>
+           <input type="range" id="p-scale" min="0.1" max="6" step="0.05" value="${l.scale}">`;
+  html += `<div class="row"><div class="col" style="flex:1"><label>X</label><input type="number" id="p-x" value="${Math.round(l.x)}"></div>
+           <div class="col" style="flex:1"><label>Y</label><input type="number" id="p-y" value="${Math.round(l.y)}"></div></div>`;
+  html += `<label>Obrót: <span id="p-rotVal">${l.rotation||0}°</span></label>
+    <div class="row">
+      <button id="p-rotL" style="flex:1">⟲ -90°</button>
+      <button id="p-rotR" style="flex:1">⟳ +90°</button>
+    </div>`;
+
+  if(l.type==='text'){
+    html += `<label>Treść</label><textarea id="p-text" rows="2">${escapeHtml(l.text)}</textarea>`;
+    html += `<label>Czcionka</label>
+      <select id="p-font">
+        ${['Arial','Georgia',''+"'Courier New'",'Verdana','Times New Roman','monospace','"Press Start 2P", monospace']
+          .map(f=>`<option value='${f}' ${l.font===f?'selected':''}>${f.replace(/["']/g,'')}</option>`).join('')}
+      </select>`;
+    html += `<label>Rozmiar: <span id="p-fsVal">${l.fontSize}</span>px</label>
+             <input type="range" id="p-fs" min="6" max="80" value="${l.fontSize}">`;
+    html += `<label>Kolor tekstu</label>
+      <div class="swatchrow">
+        <div class="swatch black ${l.color==='#000000'?'sel':''}" id="p-colB"></div>
+        <div class="swatch white ${l.color==='#ffffff'?'sel':''}" id="p-colW"></div>
+      </div>`;
+  }
+
+  if(l.type==='shape'){
+    if(l.shapeType!=='line'){
+      html += `<label><input type="checkbox" id="p-filled" ${l.filled?'checked':''} style="width:auto;margin-right:6px;">Wypełniony</label>`;
+    }
+    html += `<label>Grubość obrysu: <span id="p-swVal">${l.strokeWidth}</span>px</label>
+             <input type="range" id="p-sw" min="1" max="20" value="${l.strokeWidth}">`;
+    html += `<label>Kolor</label>
+      <div class="swatchrow">
+        <div class="swatch black ${l.color==='#000000'?'sel':''}" id="p-colB"></div>
+        <div class="swatch white ${l.color==='#ffffff'?'sel':''}" id="p-colW"></div>
+      </div>`;
+  }
+
+  if(l.type==='image'){
+    html += `<label>Tryb konwersji</label>
+      <select id="p-mode">
+        <option value="threshold" ${l.mode==='threshold'?'selected':''}>Próg (czarno/biało)</option>
+        <option value="mask" ${l.mode==='mask'?'selected':''}>Maska (dithering — gęstość czerni wg jasności)</option>
+      </select>`;
+    html += `<label>Próg: <span id="p-thVal">${l.threshold}</span></label>
+             <input type="range" id="p-th" min="0" max="255" value="${l.threshold}">`;
+    html += `<label><input type="checkbox" id="p-invert" ${l.invert?'checked':''} style="width:auto;margin-right:6px;">Odwróć</label>`;
+  }
+
+  if(l.type==='draw'){
+    html += `<div class="hint">Warstwa rysunku odręcznego. Użyj pędzla / gumki gdy ta warstwa jest aktywna, albo wybierz narzędzie „Zaznacz” aby ją przesunąć.</div>`;
+  }
+
+  box.innerHTML = html;
+  bindProps(l);
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function hexToRgb(hex){
+  const v = parseInt(hex.replace('#',''),16);
+  return [(v>>16)&255, (v>>8)&255, v&255];
+}
+
+// Wymusza czysto dwutonowy wynik (pełne krycie koloru warstwy albo pełna przezroczystość) —
+// eliminuje szare piksele powstałe z antyaliasingu canvasu przy rysowaniu kształtów/tekstu.
+function quantizeLayerCanvas(l){
+  const ctx = l.canvas.getContext('2d');
+  const w = l.canvas.width, h = l.canvas.height;
+  const id = ctx.getImageData(0,0,w,h);
+  const [cr,cg,cb] = hexToRgb(l.color);
+  const d = id.data;
+  for(let i=0;i<d.length;i+=4){
+    if(d[i+3] >= 128){
+      d[i]=cr; d[i+1]=cg; d[i+2]=cb; d[i+3]=255;
+    } else {
+      d[i]=0; d[i+1]=0; d[i+2]=0; d[i+3]=0;
+    }
+  }
+  ctx.putImageData(id,0,0);
+}
+
+function bindProps(l){
+  const $ = id=>document.getElementById(id);
+  $('p-name').addEventListener('input', e=>{ l.name=e.target.value; refreshLayerList(); });
+  $('p-name').addEventListener('change', commitHistory);
+  $('p-scale').addEventListener('input', e=>{ l.scale=parseFloat(e.target.value); $('p-scaleVal').textContent=l.scale.toFixed(2); renderAll(); });
+  $('p-scale').addEventListener('change', commitHistory);
+  $('p-x').addEventListener('input', e=>{ l.x=parseFloat(e.target.value)||0; renderAll(); });
+  $('p-x').addEventListener('change', commitHistory);
+  $('p-y').addEventListener('input', e=>{ l.y=parseFloat(e.target.value)||0; renderAll(); });
+  $('p-y').addEventListener('change', commitHistory);
+  $('p-rotL').addEventListener('click', ()=>{ l.rotation = (((l.rotation||0)-90)%360+360)%360; showProps(); renderAll(); commitHistory(); });
+  $('p-rotR').addEventListener('click', ()=>{ l.rotation = (((l.rotation||0)+90)%360+360)%360; showProps(); renderAll(); commitHistory(); });
+
+  if(l.type==='text'){
+    $('p-text').addEventListener('input', e=>{ l.text=e.target.value; rebuildTextLayer(l); });
+    $('p-text').addEventListener('change', commitHistory);
+    $('p-font').addEventListener('change', e=>{ l.font=e.target.value; rebuildTextLayer(l); commitHistory(); });
+    $('p-fs').addEventListener('input', e=>{ l.fontSize=parseInt(e.target.value,10); $('p-fsVal').textContent=l.fontSize; rebuildTextLayer(l); });
+    $('p-fs').addEventListener('change', commitHistory);
+    $('p-colB').addEventListener('click', ()=>{ l.color='#000000'; rebuildTextLayer(l); showProps(); commitHistory(); });
+    $('p-colW').addEventListener('click', ()=>{ l.color='#ffffff'; rebuildTextLayer(l); showProps(); commitHistory(); });
+  }
+
+  if(l.type==='shape'){
+    if($('p-filled')) $('p-filled').addEventListener('change', e=>{ l.filled=e.target.checked; rebuildShapeLayer(l); commitHistory(); });
+    $('p-sw').addEventListener('input', e=>{ l.strokeWidth=parseInt(e.target.value,10); $('p-swVal').textContent=l.strokeWidth; rebuildShapeLayer(l); });
+    $('p-sw').addEventListener('change', commitHistory);
+    $('p-colB').addEventListener('click', ()=>{ l.color='#000000'; rebuildShapeLayer(l); showProps(); commitHistory(); });
+    $('p-colW').addEventListener('click', ()=>{ l.color='#ffffff'; rebuildShapeLayer(l); showProps(); commitHistory(); });
+  }
+
+  if(l.type==='image'){
+    $('p-mode').addEventListener('change', e=>{ l.mode=e.target.value; rebuildImageLayer(l); commitHistory(); });
+    $('p-th').addEventListener('input', e=>{ l.threshold=parseInt(e.target.value,10); $('p-thVal').textContent=l.threshold; rebuildImageLayer(l); });
+    $('p-th').addEventListener('change', commitHistory);
+    $('p-invert').addEventListener('change', e=>{ l.invert=e.target.checked; rebuildImageLayer(l); commitHistory(); });
+  }
+}
+
+// ---------- Rebuild functions ----------
+function rebuildTextLayer(l){
+  const measureC = document.createElement('canvas').getContext('2d');
+  measureC.font = `${l.fontSize}px ${l.font}`;
+  const lines = (l.text||' ').split('\n');
+  let maxW = 1;
+  for(const ln of lines) maxW = Math.max(maxW, measureC.measureText(ln||' ').width);
+  const lineH = Math.ceil(l.fontSize*1.25);
+  const h = Math.max(1, lineH*lines.length);
+  const {canvas,ctx} = makeLayerCanvas(Math.ceil(maxW)+2, h);
+  ctx.font = `${l.fontSize}px ${l.font}`;
+  ctx.fillStyle = l.color;
+  ctx.textBaseline = 'top';
+  lines.forEach((ln,i)=> ctx.fillText(ln, 1, i*lineH));
+  l.canvas = canvas; l.ctx = ctx;
+  quantizeLayerCanvas(l);
+  renderAll();
+}
+
+function rebuildShapeLayer(l){
+  const w = l.canvas.width, h = l.canvas.height;
+  const {canvas,ctx} = makeLayerCanvas(w,h);
+  ctx.strokeStyle = l.color;
+  ctx.fillStyle = l.color;
+  ctx.lineWidth = l.strokeWidth;
+  ctx.lineCap = 'round';
+  const pad = Math.ceil(l.strokeWidth/2)+1;
+  if(l.shapeType==='rect'){
+    if(l.filled) ctx.fillRect(pad,pad,w-2*pad,h-2*pad);
+    else ctx.strokeRect(pad,pad,w-2*pad,h-2*pad);
+  } else if(l.shapeType==='ellipse'){
+    ctx.beginPath();
+    ctx.ellipse(w/2,h/2,Math.max(1,w/2-pad),Math.max(1,h/2-pad),0,0,Math.PI*2);
+    if(l.filled) ctx.fill(); else ctx.stroke();
+  } else if(l.shapeType==='line'){
+    // Rysuj dokładnie tak, jak przeciągnięto — dowolny kierunek/kąt, nie tylko po przekątnej.
+    const from = l.lineFrom || {x:pad, y:h-pad};
+    const to = l.lineTo || {x:w-pad, y:pad};
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  }
+  l.canvas = canvas; l.ctx = ctx;
+  quantizeLayerCanvas(l);
+  renderAll();
+}
+
+// Dithering Floyda-Steinberga: rozprasza błąd zaokrąglenia jasności na sąsiednie piksele,
+// dzięki czemu gęstość czarnych kropek odpowiada ciemności oryginału (lepiej wygląda dla zdjęć/gradientów).
+function floydSteinbergDither(gray, w, h){
+  const buf = Float32Array.from(gray);
+  const out = new Uint8Array(w*h); // 0 = czarny, 255 = biały
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const idx = y*w+x;
+      const old = buf[idx];
+      const bit = old < 128 ? 0 : 255;
+      out[idx] = bit;
+      const err = old - bit;
+      if(x+1<w)            buf[idx+1]        += err * 7/16;
+      if(x-1>=0 && y+1<h)  buf[idx-1+w]      += err * 3/16;
+      if(y+1<h)            buf[idx+w]        += err * 5/16;
+      if(x+1<w && y+1<h)   buf[idx+1+w]      += err * 1/16;
+    }
+  }
+  return out;
+}
+
+function rebuildImageLayer(l){
+  const w = l.origCanvas.width, h = l.origCanvas.height;
+  const src = l.origCanvas.getContext('2d').getImageData(0,0,w,h);
+  const {canvas,ctx} = makeLayerCanvas(w,h);
+  const out = ctx.createImageData(w,h);
+
+  if(l.mode==='mask'){
+    // Zbuduj mapę jasności (uwzględniając próg jako przesunięcie kontrastu i odwrócenie).
+    const gray = new Float32Array(w*h);
+    for(let i=0, p=0; i<src.data.length; i+=4, p++){
+      const r=src.data[i], g=src.data[i+1], b=src.data[i+2], a=src.data[i+3];
+      let lum = a<10 ? 255 : (0.299*r+0.587*g+0.114*b);
+      if(l.invert) lum = 255-lum;
+      // przesunięcie względem progu: wartość 128 w progu = brak zmiany
+      lum = lum + (128 - l.threshold);
+      gray[p] = Math.max(0, Math.min(255, lum));
+    }
+    const dithered = floydSteinbergDither(gray, w, h);
+    for(let p=0, i=0; p<dithered.length; p++, i+=4){
+      const isBlack = dithered[p] === 0;
+      out.data[i]=0; out.data[i+1]=0; out.data[i+2]=0;
+      out.data[i+3] = isBlack ? 255 : 0; // czarne kropki nieprzezroczyste, reszta przezroczysta
+    }
+  } else {
+    // Prosty, twardy próg — całe pole obrazu w pełni kryjące (czarne/białe).
+    for(let i=0;i<src.data.length;i+=4){
+      const r=src.data[i], g=src.data[i+1], b=src.data[i+2], a=src.data[i+3];
+      let lum = 0.299*r+0.587*g+0.114*b;
+      if(a<10) lum = 255;
+      let bit = lum < l.threshold ? 0 : 255;
+      if(l.invert) bit = 255-bit;
+      out.data[i]=bit; out.data[i+1]=bit; out.data[i+2]=bit; out.data[i+3]=255;
+    }
+  }
+
+  ctx.putImageData(out,0,0);
+  l.canvas = canvas; l.ctx = ctx;
+  renderAll();
+}
+
+// ---------- Tools ----------
+const toolButtons = document.querySelectorAll('[data-tool]');
+toolButtons.forEach(b=>b.addEventListener('click', ()=>{
+  tool = b.dataset.tool;
+  toolButtons.forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  main.style.cursor = tool==='select' ? 'move' : 'crosshair';
+}));
+document.getElementById('t-select').classList.add('active');
+main.style.cursor = 'move';
+
+document.getElementById('colBlack').addEventListener('click', e=>{
+  drawColor='#000000';
+  document.querySelectorAll('.swatchrow .swatch').forEach(s=>s.classList.remove('sel'));
+  e.target.classList.add('sel');
+});
+document.getElementById('colWhite').addEventListener('click', e=>{
+  drawColor='#ffffff';
+  document.querySelectorAll('#tools .swatchrow .swatch').forEach(s=>s.classList.remove('sel'));
+  e.target.classList.add('sel');
+});
+document.getElementById('brushSize').addEventListener('input', e=>{
+  brushSize = parseInt(e.target.value,10);
+  document.getElementById('brushVal').textContent = brushSize;
+});
+document.getElementById('fillToggle').addEventListener('click', e=>{
+  fillShapes = !fillShapes;
+  e.target.classList.toggle('active', fillShapes);
+  e.target.textContent = fillShapes ? 'Wypełniony' : 'Kontur';
+});
+(function(){
+  let armed = false, timer = null;
+  const btn = document.getElementById('clearAll');
+  const label = btn.textContent;
+  btn.addEventListener('click', ()=>{
+    if(!armed){
+      armed = true;
+      btn.textContent = 'Kliknij ponownie, aby potwierdzić';
+      btn.classList.add('active');
+      timer = setTimeout(()=>{ armed=false; btn.textContent=label; btn.classList.remove('active'); }, 3000);
+      return;
+    }
+    clearTimeout(timer);
+    armed = false;
+    btn.textContent = label;
+    btn.classList.remove('active');
+    layers = []; activeId = null; refreshLayerList(); renderAll();
+    commitHistory();
+  });
+})();
+
+document.getElementById('undoBtn').addEventListener('click', undo);
+document.getElementById('redoBtn').addEventListener('click', redo);
+window.addEventListener('keydown', (e)=>{
+  const tag = (e.target && e.target.tagName) || '';
+  if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT') return; // nie przechwytuj cofania tekstu w polach
+  if(!(e.ctrlKey || e.metaKey)) return;
+  const k = e.key.toLowerCase();
+  if(k==='z' && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if(k==='y' || (k==='z' && e.shiftKey)){ e.preventDefault(); redo(); }
+});
+
+// ---------- Canvas coordinate helpers ----------
+// Liczymy pozycję kursora względem środka canvasu, a potem cofamy ewentualny obrót CSS (rotate(90deg)),
+// żeby rysowanie/zaznaczanie działało poprawnie zarówno w widoku pionowym, jak i obróconym o 90°.
+function canvasPoint(evt){
+  const r = main.getBoundingClientRect(); // bounding box już uwzględnia rotację (jest zawsze axis-aligned)
+  const cx = r.left + r.width/2;
+  const cy = r.top + r.height/2;
+  const sdx = evt.clientX - cx;
+  const sdy = evt.clientY - cy;
+  // Odwrotność rotacji o 90°: local = R(-90) * screen
+  const ldx = rotatedView ? sdy : sdx;
+  const ldy = rotatedView ? -sdx : sdy;
+  const xcss = ldx + (CW*zoom)/2;
+  const ycss = ldy + (CH*zoom)/2;
+  return { x: xcss/zoom, y: ycss/zoom };
+}
+
+
+// ---------- Pen / Eraser drawing ----------
+let drawing = false;
+let lastPt = null;
+
+function ensureDrawLayer(){
+  const l = activeLayer();
+  if(l && l.type==='draw') return l;
+  const {canvas,ctx} = makeLayerCanvas(CW,CH);
+  const layer = {type:'draw', name:'Rysunek '+idCounter, x:0, y:0, canvas, ctx};
+  layer.imgData = ctx.getImageData(0,0,CW,CH);
+  return addLayer(layer);
+}
+
+// Gumka NIE tworzy nowej, pustej warstwy (wymazywanie przezroczystości na świeżo utworzonej,
+// w pełni przezroczystej warstwie nic wizualnie nie zmienia — stąd wrażenie że "nic nie robi").
+// Zamiast tego: jeśli aktywna warstwa jest warstwą rysunku, używa jej; inaczej szuka
+// najwyższej istniejącej warstwy rysunku i przełącza się na nią. Jeśli żadna jeszcze
+// nie istnieje, zwraca null — nie ma czego wymazywać.
+function findDrawLayerForEraser(){
+  const active = activeLayer();
+  if(active && active.type === 'draw') return active;
+
+  const existing = [...layers].reverse().find(x => x.type === 'draw');
+  if(existing){
+    activeId = existing.id;
+    refreshLayerList();
+    return existing;
+  }
+  return null;
+}
+
+// Ustawia pojedynczy piksel bezpośrednio w buforze warstwy (bez antyaliasingu).
+function setPx(l, x, y, r,g,b,a){
+  x = Math.round(x); y = Math.round(y);
+  if(x<0||y<0||x>=l.canvas.width||y>=l.canvas.height) return;
+  const idx = (y*l.canvas.width + x) * 4;
+  const d = l.imgData.data;
+  d[idx]=r; d[idx+1]=g; d[idx+2]=b; d[idx+3]=a;
+}
+
+// Okrągły "stempel" pędzla — twarde krawędzie, bez wygładzania. alpha=255: maluje kolorem (kryje),
+// alpha=0: czyści do przezroczystości (odsłania to, co jest niżej — inną warstwę albo białe tło).
+function stampBrush(l, cx, cy, size, rgb, alpha){
+  if(alpha===undefined) alpha = 255;
+  const r = Math.max(0.5, size/2);
+  const rr = r*r;
+  const x0 = Math.floor(cx-r), x1 = Math.ceil(cx+r);
+  const y0 = Math.floor(cy-r), y1 = Math.ceil(cy+r);
+  for(let y=y0;y<=y1;y++){
+    for(let x=x0;x<=x1;x++){
+      const dx = x-cx+0.5, dy = y-cy+0.5;
+      if(dx*dx+dy*dy <= rr){
+        setPx(l, x, y, rgb[0], rgb[1], rgb[2], alpha);
+      }
+    }
+  }
+}
+
+// Linia między dwoma punktami (algorytm Bresenhama), stemplowana pędzlem — ciągła, twarda kreska.
+function lineBrush(l, x0,y0,x1,y1, size, rgb, alpha){
+  x0=Math.round(x0); y0=Math.round(y0); x1=Math.round(x1); y1=Math.round(y1);
+  const dx = Math.abs(x1-x0), dy = Math.abs(y1-y0);
+  const sx = x0<x1 ? 1 : -1, sy = y0<y1 ? 1 : -1;
+  let err = dx-dy;
+  let steps = 0, maxSteps = dx+dy+2;
+  while(steps++ <= maxSteps){
+    stampBrush(l, x0, y0, size, rgb, alpha);
+    if(x0===x1 && y0===y1) break;
+    const e2 = 2*err;
+    if(e2 > -dy){ err -= dy; x0 += sx; }
+    if(e2 < dx){ err += dx; y0 += sy; }
+  }
+}
+
+// ---------- Shape drag-create ----------
+let shapeStart = null;
+
+// ---------- Select/move ----------
+let moving = false;
+let moveOffset = {x:0,y:0};
+let moveStart = {x:0,y:0};
+
+function hitTest(pt){
+  for(let i=layers.length-1;i>=0;i--){
+    const l = layers[i];
+    if(!l.visible) continue;
+    const box = layerSelectionBox(l);
+    if(pt.x>=box.x && pt.x<=box.x+box.fw && pt.y>=box.y && pt.y<=box.y+box.fh) return l;
+  }
+  return null;
+}
+
+// Pointer Events zamiast osobnych mousedown/touchstart — jeden model obsługujący
+// mysz, dotyk (telefon/tablet) i rysik. activePointerId chroni przed chaosem, gdyby
+// podczas rysowania palcem dotknęła ekranu dłoń/drugi palec (ignorujemy taki dodatkowy dotyk).
+let activePointerId = null;
+
+main.addEventListener('pointerdown', (e)=>{
+  if(activePointerId !== null) return; // już obsługujemy inny dotyk/kursor — ignoruj kolejny
+  activePointerId = e.pointerId;
+  e.preventDefault();
+
+  const pt = canvasPoint(e);
+
+  if(tool==='pen' || tool==='eraser'){
+    const l = tool==='eraser' ? findDrawLayerForEraser() : ensureDrawLayer();
+    if(!l){
+      // Gumka bez żadnej istniejącej warstwy rysunku — nie ma czego wymazywać.
+      activePointerId = null;
+      return;
+    }
+    drawing = true;
+    lastPt = pt;
+    const rgb = tool==='eraser' ? [0,0,0] : hexToRgb(drawColor);
+    const alpha = tool==='eraser' ? 0 : 255;
+    stampBrush(l, pt.x-l.x, pt.y-l.y, brushSize, rgb, alpha);
+    l.ctx.putImageData(l.imgData, 0, 0);
+    renderAll();
+    return;
+  }
+
+  if(tool==='select'){
+    const l = hitTest(pt);
+    if(l){
+      activeId = l.id;
+      moving = true;
+      moveOffset = {x: pt.x - l.x, y: pt.y - l.y};
+      moveStart = {x: l.x, y: l.y};
+      refreshLayerList();
+    }
+    return;
+  }
+
+  if(tool==='rect'||tool==='ellipse'||tool==='line'){
+    shapeStart = pt;
+    drawing = true;
+    return;
+  }
+});
+
+window.addEventListener('pointermove', (e)=>{
+  if(activePointerId !== null && e.pointerId !== activePointerId) return;
+  if(!drawing && !moving) return;
+  const pt = canvasPoint(e);
+
+  if(drawing && (tool==='pen'||tool==='eraser')){
+    const l = activeLayer();
+    if(l && l.type==='draw'){
+      const rgb = tool==='eraser' ? [0,0,0] : hexToRgb(drawColor);
+      const alpha = tool==='eraser' ? 0 : 255;
+      lineBrush(l, lastPt.x-l.x, lastPt.y-l.y, pt.x-l.x, pt.y-l.y, brushSize, rgb, alpha);
+      l.ctx.putImageData(l.imgData, 0, 0);
+      lastPt = pt;
+      renderAll();
+    }
+  }
+
+  if(moving){
+    const l = activeLayer();
+    if(l){
+      l.x = pt.x - moveOffset.x;
+      l.y = pt.y - moveOffset.y;
+      renderAll();
+    }
+  }
+
+  if(drawing && shapeStart && (tool==='rect'||tool==='ellipse'||tool==='line')){
+    octx.clearRect(0,0,CW,CH);
+    octx.strokeStyle = '#f2c14e';
+    octx.setLineDash([3,2]);
+    const x = Math.min(shapeStart.x, pt.x), y = Math.min(shapeStart.y, pt.y);
+    const w = Math.abs(pt.x-shapeStart.x), h = Math.abs(pt.y-shapeStart.y);
+    octx.strokeRect(x,y,w,h);
+  }
+});
+
+function endPointerInteraction(e){
+  if(activePointerId !== null && e.pointerId !== activePointerId) return;
+  activePointerId = null;
+
+  if(drawing && (tool==='pen'||tool==='eraser')){
+    drawing = false; lastPt=null;
+    document.getElementById('props').innerHTML && showProps();
+    refreshLayerList();
+    commitHistory();
+  }
+  if(moving){
+    moving = false;
+    showProps();
+    const l = activeLayer();
+    if(l && (l.x!==moveStart.x || l.y!==moveStart.y)) commitHistory();
+  }
+  if(drawing && shapeStart && (tool==='rect'||tool==='ellipse'||tool==='line')){
+    const pt = canvasPoint(e);
+    const pad = Math.ceil(brushSize/2)+1;
+    let x, y, w, h, lineFrom, lineTo;
+    if(tool==='line'){
+      // Dowolny kierunek/kąt: bierzemy realny prostokąt otaczający oba punkty,
+      // dodając margines na grubość obrysu, i zapamiętujemy lokalne współrzędne początku/końca.
+      x = Math.min(shapeStart.x, pt.x) - pad;
+      y = Math.min(shapeStart.y, pt.y) - pad;
+      w = Math.abs(pt.x-shapeStart.x) + 2*pad;
+      h = Math.abs(pt.y-shapeStart.y) + 2*pad;
+      lineFrom = { x: shapeStart.x - x, y: shapeStart.y - y };
+      lineTo   = { x: pt.x - x,          y: pt.y - y };
+    } else {
+      x = Math.min(shapeStart.x, pt.x);
+      y = Math.min(shapeStart.y, pt.y);
+      w = Math.max(4, Math.abs(pt.x-shapeStart.x));
+      h = Math.max(4, Math.abs(pt.y-shapeStart.y));
+    }
+    const l = {
+      type:'shape', name:(tool==='rect'?'Prostokąt ':tool==='ellipse'?'Elipsa ':'Linia ')+idCounter,
+      x, y, shapeType:tool, filled: tool==='line' ? false : fillShapes,
+      strokeWidth: brushSize, color: drawColor, lineFrom, lineTo
+    };
+    const {canvas,ctx} = makeLayerCanvas(w,h);
+    l.canvas = canvas; l.ctx = ctx;
+    addLayer(l);
+    rebuildShapeLayer(l);
+    shapeStart = null;
+    drawing = false;
+    octx.clearRect(0,0,CW,CH);
+    drawSelectionOverlay();
+    commitHistory();
+  }
+}
+window.addEventListener('pointerup', endPointerInteraction);
+window.addEventListener('pointercancel', endPointerInteraction);
+
+main.addEventListener('click', (e)=>{
+  if(tool!=='text') return;
+  const pt = canvasPoint(e);
+  const l = {
+    type:'text', name:'Tekst '+idCounter, x:pt.x, y:pt.y,
+    text:'Tekst', font:'Arial', fontSize:16, color: drawColor,
+    rotation: rotatedView ? 270 : 0
+  };
+  const {canvas,ctx} = makeLayerCanvas(10,10);
+  l.canvas = canvas; l.ctx = ctx;
+  addLayer(l);
+  rebuildTextLayer(l);
+  commitHistory();
+  // od razu zaznacz treść w panelu po prawej, żeby można było ją nadpisać
+  setTimeout(()=>{
+    const ta = document.getElementById('p-text');
+    if(ta){ ta.focus(); ta.select(); }
+  }, 0);
+});
+
+// ---------- Image import ----------
+document.getElementById('t-image').addEventListener('click', ()=> document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const img = new Image();
+  img.onload = ()=>{
+    let w = img.width, h = img.height;
+    // Ramka dopasowania: gdy pracujemy w obróconym (poziomym) widoku, obraz komponujemy
+    // tak, jakby docelowa ramka miała 320×96 — po obrocie 270° trafi poprawnie w bufor 96×320.
+    const bw = rotatedView ? CH : CW;
+    const bh = rotatedView ? CW : CH;
+    if(w>bw){ h = h*(bw/w); w = bw; }
+    if(h>bh){ w = w*(bh/h); h = bh; }
+    const oc = document.createElement('canvas');
+    oc.width = Math.round(w); oc.height = Math.round(h);
+    const octx2 = oc.getContext('2d');
+    octx2.drawImage(img,0,0,oc.width,oc.height);
+
+    const rotation = rotatedView ? 270 : 0;
+    const fw = rotatedView ? oc.height : oc.width;
+    const fh = rotatedView ? oc.width : oc.height;
+    const l = {
+      type:'image', name:'Obraz '+idCounter,
+      x: Math.round((CW-fw)/2), y: Math.round((CH-fh)/2),
+      threshold:128, mode:'threshold', invert:false,
+      rotation,
+      origCanvas: oc
+    };
+    const {canvas,ctx} = makeLayerCanvas(oc.width, oc.height);
+    l.canvas = canvas; l.ctx = ctx;
+    addLayer(l);
+    rebuildImageLayer(l);
+    commitHistory();
+  };
+  img.src = URL.createObjectURL(file);
+  e.target.value = '';
+});
+
+// ---------- Drukowanie przez WebUSB (bezpośrednio z przeglądarki, bez serwera) ----------
+// Ten sam protokół co w dostarczonym, działającym skrypcie Pythona (d110_api.py):
+// CMD_SET_PAPER_GAP + WAKE_UP + CMD_ENABLE_PRINT + raster(1D 76 30 00 + bitpacked) + CMD_FEED + CMD_STOP_PRINT
+
+const D110_VID = 0x09C5;
+const D110_PID = 0x0200;
+
+const CMD_SET_PAPER_GAP = new Uint8Array([0x10, 0xFF, 0x84, 0x00]);
+const WAKE_UP           = new Uint8Array(12); // 12 zerowych bajtów
+const CMD_ENABLE_PRINT  = new Uint8Array([0x10, 0xFF, 0xFE, 0x01]);
+const CMD_FEED          = new Uint8Array([0x1D, 0x0C]);
+const CMD_STOP_PRINT    = new Uint8Array([0x10, 0xFF, 0xFE, 0x45]);
+
+let usbDevice = null;
+let usbOutEndpoint = 1;
+
+function concatBytes(...arrays){
+  const total = arrays.reduce((s,a)=>s+a.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for(const a of arrays){ out.set(a, offset); offset += a.length; }
+  return out;
+}
+
+// Buduje raster z aktualnego canvasu 96×320 — identycznie jak build_raster_command() w Pythonie:
+// dla każdego wiersza, grupami po 8 pikseli, MSB = piksel najbardziej po lewej w grupie.
+function buildRasterCommand(canvas){
+  const w = canvas.width, h = canvas.height;
+  if(w % 8 !== 0){
+    throw new Error(`Szerokość obrazu (${w}px) musi być wielokrotnością 8`);
+  }
+  const widthBytes = w / 8;
+  const ctx = canvas.getContext('2d');
+  const pixels = ctx.getImageData(0, 0, w, h).data;
+
+  const data = new Uint8Array(widthBytes * h);
+  let di = 0;
+
+  for(let y=0; y<h; y++){
+    for(let xb=0; xb<widthBytes; xb++){
+      let byte = 0;
+      for(let bit=0; bit<8; bit++){
+        const x = xb*8 + bit;
+        const idx = (y*w + x) * 4;
+        const isBlack = pixels[idx] < 128; // nasz canvas jest już czysto czarno-biały
+        byte = (byte << 1) | (isBlack ? 1 : 0);
+      }
+      data[di++] = byte;
+    }
+  }
+
+  const header = new Uint8Array([
+    0x1D, 0x76, 0x30, 0x00,
+    widthBytes & 0xFF, (widthBytes >> 8) & 0xFF,
+    h & 0xFF, (h >> 8) & 0xFF,
+  ]);
+
+  return concatBytes(header, data);
+}
+
+// Łączy z drukarką: najpierw próbuje użyć urządzenia już wcześniej autoryzowanego dla tej
+// strony (bez pytania ponownie), a jeśli go nie ma — pokazuje natywny wybór urządzenia Chrome
+// (wymaga gestu użytkownika — dlatego wywołujemy to z handlera kliknięcia przycisku DRUKUJ).
+async function ensureUsbDevice(){
+  if(usbDevice && usbDevice.opened) return usbDevice;
+
+  if(!('usb' in navigator)){
+    throw new Error(
+      'WebUSB nie jest dostępny w tej przeglądarce/kontekście. Wymagany Chrome/Edge/Opera ' +
+      '(nie Firefox/Safari) oraz strona otwarta jako plik (file://) albo przez HTTPS.'
+    );
+  }
+
+  let device = null;
+  try{
+    const known = await navigator.usb.getDevices();
+    device = known.find(d => d.vendorId===D110_VID && d.productId===D110_PID) || null;
+  } catch(_e){ /* ignoruj, spróbujemy requestDevice */ }
+
+  if(!device){
+    device = await navigator.usb.requestDevice({
+      filters: [{ vendorId: D110_VID, productId: D110_PID }]
+    });
+  }
+
+  await device.open();
+  if(device.configuration === null){
+    await device.selectConfiguration(1);
+  }
+
+  const iface = device.configuration.interfaces[0];
+  await device.claimInterface(iface.interfaceNumber);
+
+  const alt = iface.alternates[0];
+  const outEp = alt.endpoints.find(e => e.direction === 'out');
+  usbOutEndpoint = outEp ? outEp.endpointNumber : 1;
+
+  usbDevice = device;
+  return device;
+}
+
+async function sendToPrinter(device, canvas){
+  const raster = buildRasterCommand(canvas);
+  const full = concatBytes(CMD_SET_PAPER_GAP, WAKE_UP, CMD_ENABLE_PRINT, raster, CMD_FEED, CMD_STOP_PRINT);
+
+  const chunkSize = 240; // tak samo jak w oryginalnym skrypcie
+  for(let offset=0; offset<full.length; offset+=chunkSize){
+    const chunk = full.slice(offset, offset+chunkSize);
+    const result = await device.transferOut(usbOutEndpoint, chunk);
+    if(result.status !== 'ok'){
+      throw new Error('Błąd transferu USB: ' + result.status);
+    }
+    await new Promise(r => setTimeout(r, 20)); // odpowiednik time.sleep(0.02)
+  }
+}
+
+// Ostrzeżenie od razu przy starcie, jeśli WebUSB w ogóle nie jest dostępny w tym kontekście.
+(function checkWebUsbSupport(){
+  const warn = document.getElementById('usbWarning');
+  if(!('usb' in navigator)){
+    warn.style.display = 'block';
+    warn.textContent = '⚠ WebUSB niedostępny. Otwórz tę stronę w Chrome/Edge (nie Firefox/Safari), ' +
+      'jako plik lokalny albo przez HTTPS — drukowanie nie zadziała w obecnym kontekście.';
+  }
+})();
+
+document.getElementById('printBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('printBtn');
+  const status = document.getElementById('printStatus');
+  btn.disabled = true;
+  status.className = 'status-info';
+  status.textContent = 'Łączenie z drukarką (USB)…';
+
+  try{
+    const device = await ensureUsbDevice();
+    status.textContent = 'Drukowanie…';
+    await sendToPrinter(device, main);
+    status.className = 'status-ok';
+    status.textContent = '✓ Wydrukowano.';
+  } catch(err){
+    status.className = 'status-err';
+    const msg = (err && err.message) ? err.message : String(err);
+    status.textContent = '✗ ' + msg;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('exportBmp').addEventListener('click', ()=>{
+  const w = window.open('');
+  const img = new Image();
+  img.onload = ()=>{
+    w.document.title = 'Podgląd 1:1 (96×320)';
+    w.document.body.style.margin='0';
+    w.document.body.style.background='#222';
+    w.document.body.style.display='flex';
+    w.document.body.style.justifyContent='center';
+    w.document.body.style.alignItems='center';
+    w.document.body.style.height='100vh';
+    img.style.imageRendering='pixelated';
+    img.style.border = '1px solid #555';
+    w.document.body.appendChild(img);
+  };
+  img.src = main.toDataURL();
+});
+
+// ---------- Ekran startowy: wybór długości etykiety ----------
+// Ustala CH (wysokość bufora = długość wydruku) PRZED jakąkolwiek inicjalizacją —
+// wszystkie funkcje odczytują CH przez nazwę, więc wystarczy ustawić je raz na starcie.
+const PX_PER_MM = 8; // wyliczone z dotychczasowych etykiet: 320px = 40mm => 8 px/mm (odpowiada ~203 DPI)
+
+let startupUnit = 'px';
+
+const startupPresetSel   = document.getElementById('startupPreset');
+const startupCustomWrap  = document.getElementById('startupCustomWrap');
+const startupCustomInput = document.getElementById('startupCustom');
+
+const startupPresetMmSel   = document.getElementById('startupPresetMm');
+const startupCustomMmWrap  = document.getElementById('startupCustomMmWrap');
+const startupCustomMmInput = document.getElementById('startupCustomMm');
+const mmToPxPreview        = document.getElementById('mmToPxPreview');
+
+const unitPxBtn = document.getElementById('unitPxBtn');
+const unitMmBtn = document.getElementById('unitMmBtn');
+const unitPxBlock = document.getElementById('unitPxBlock');
+const unitMmBlock = document.getElementById('unitMmBlock');
+
+function setStartupUnit(unit){
+  startupUnit = unit;
+  const pxActive = unit === 'px';
+  unitPxBlock.style.display = pxActive ? 'block' : 'none';
+  unitMmBlock.style.display = pxActive ? 'none' : 'block';
+  unitPxBtn.style.background = pxActive ? '#5a4c26' : '#1b1d1f';
+  unitPxBtn.style.borderColor = pxActive ? '#f2c14e' : '#3a3d41';
+  unitPxBtn.style.color = pxActive ? '#f2c14e' : '#e7e5e0';
+  unitMmBtn.style.background = !pxActive ? '#5a4c26' : '#1b1d1f';
+  unitMmBtn.style.borderColor = !pxActive ? '#f2c14e' : '#3a3d41';
+  unitMmBtn.style.color = !pxActive ? '#f2c14e' : '#e7e5e0';
+}
+unitPxBtn.addEventListener('click', ()=>setStartupUnit('px'));
+unitMmBtn.addEventListener('click', ()=>setStartupUnit('mm'));
+
+startupPresetSel.addEventListener('change', ()=>{
+  startupCustomWrap.style.display = (startupPresetSel.value === 'custom') ? 'block' : 'none';
+});
+
+function currentMmValue(){
+  if(startupPresetMmSel.value === 'custom'){
+    return parseFloat(startupCustomMmInput.value);
+  }
+  return parseFloat(startupPresetMmSel.value);
+}
+
+function updateMmPreview(){
+  const mm = currentMmValue();
+  const px = Math.round((mm || 0) * PX_PER_MM);
+  mmToPxPreview.textContent = px > 0 ? px : '—';
+}
+
+startupPresetMmSel.addEventListener('change', ()=>{
+  startupCustomMmWrap.style.display = (startupPresetMmSel.value === 'custom') ? 'block' : 'none';
+  updateMmPreview();
+});
+startupCustomMmInput.addEventListener('input', updateMmPreview);
+updateMmPreview();
+
+document.getElementById('startupBtn').addEventListener('click', ()=>{
+  let chosen;
+
+  if(startupUnit === 'mm'){
+    const mm = currentMmValue();
+    chosen = Math.round((mm || 0) * PX_PER_MM);
+  } else if(startupPresetSel.value === 'custom'){
+    chosen = parseInt(startupCustomInput.value, 10);
+  } else {
+    chosen = parseInt(startupPresetSel.value, 10);
+  }
+
+  if(!chosen || chosen < 16){ chosen = 320; }
+
+  CH = chosen;
+  main.width = CW;
+  main.height = CH;
+  overlay.width = CW;
+  overlay.height = CH;
+  applyCanvasTransform();
+
+  document.getElementById('startupModal').style.display = 'none';
+
+  // Właściwa inicjalizacja aplikacji — dopiero teraz, gdy CH jest już ustalone.
+  refreshLayerList();
+  renderAll();
+  history = [snapshotState()];
+  historyIndex = 0;
+  updateUndoRedoButtons();
+});
+})();
+</script>
+</body>
+</html>
